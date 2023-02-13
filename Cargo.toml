@@ -1,6 +1,9 @@
+[profile.bench]
+debug = true
 [workspace]
 members = [
     "halo2",
     "halo2_gadgets",
     "halo2_proofs",
+    "crypto-cuda",
 ]
