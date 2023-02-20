@@ -300,7 +300,7 @@ mod test {
 
     #[test]
     fn test_commit_lagrange() {
-        const K: u32 = 6;
+        const K: u32 = 20;
 
         use rand_core::OsRng;
 

@@ -15,7 +15,7 @@ macro_rules! make_params {
 #[macro_export]
 macro_rules! create_kernel_with_params {
     ($func: tt, <<<$grid: expr, $block: expr, $shm: tt>>>($params: tt)) => {
-        crate::kernel::CudaKernel::new(
+        ::crypto_cuda::kernel::CudaKernel::new(
             $func,
             $grid,
             1,
