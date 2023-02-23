@@ -124,12 +124,12 @@ void __device__ __forceinline__ add(const FF *lhs, const FF *rhs, FF *out) {
 }
 
 void __device__ __forceinline__ square(FF *self, FF *out) {
-  uint64_t r[8], carry;
+  uint64_t r[8], carry = 0;
   arithmetic::mac(0, self->bytes[0], self->bytes[1], 0, &r[1], &carry);
-  arithmetic::mac(0, self->bytes[0], self->bytes[2], carry, &r[1], &carry);
+  arithmetic::mac(0, self->bytes[0], self->bytes[2], carry, &r[2], &carry);
   arithmetic::mac(0, self->bytes[0], self->bytes[3], carry, &r[3], &r[4]);
 
-  arithmetic::mac(r[3], self->bytes[1], self->bytes[2], 0, &r[4], &carry);
+  arithmetic::mac(r[3], self->bytes[1], self->bytes[2], 0, &r[3], &carry);
   arithmetic::mac(r[4], self->bytes[1], self->bytes[3], carry, &r[4], &r[5]);
   arithmetic::mac(r[5], self->bytes[2], self->bytes[3], 0, &r[5], &r[6]);
 
@@ -237,6 +237,10 @@ extern "C" void __global__ ff_sub(ff::FF *lhs, ff::FF *rhs, ff::FF *out) {
   ff::sub(lhs, rhs, out);
 }
 
-extern "C" void __global__ mac(uint64_t *arg) {
-  arithmetic::mac(arg[0], arg[1], arg[2], arg[3], &arg[4], &arg[5]);
+extern "C" void __global__ ff_square(ff::FF *lhs, ff::FF *out) {
+  ff::square(lhs, out);
+}
+
+extern "C" void __global__ ff_montgomery_reduce(uint64_t* r, ff::FF* out) {
+  ff::montgomery_reduce(r, out);
 }
