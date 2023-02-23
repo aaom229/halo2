@@ -5,37 +5,105 @@ mod tests {
         make_params, CudaContext, CudaDevice, CudaModule, CudaResult, CudaStream, DeviceMemory,
         HostMemory,
     };
-    use halo2curves::bn256::{Fq, G1Affine};
+    use halo2curves::bn256::Fq;
     use std::path::PathBuf;
 
     const BUF_LEN: usize = 1 << 10;
     const BUCKET_LEN: usize = 1 << 8;
 
     #[test]
-    fn test_ff() -> CudaResult<()> {
+    fn test_ff_add() -> CudaResult<()> {
         cuda_init()?;
         let dev = CudaDevice::new(0)?;
         let ctx = CudaContext::new(dev)?;
 
-        let src_host = (0..10).map(|_| G1Affine::generator()).collect::<Vec<_>>();
-        let mut dst_host = HostMemory::<G1Affine>::new(10)?;
-        let src = DeviceMemory::<G1Affine>::new(&ctx, 10)?;
-        let dst = DeviceMemory::<G1Affine>::new(&ctx, 10)?;
+        let lhs_value = Fq::from_raw([
+            0x1212121212121212,
+            0x1212121212121212,
+            0x1212121212121212,
+            0x1212121212121212,
+        ]);
 
-        src.read_from(&src_host, src_host.len())?;
+        let rhs_value = Fq::from_raw([
+            0xf2f2f2f2f2f2f2f2,
+            0xf2f2f2f2f2f2f2f2,
+            0xf2f2f2f2f2f2f2f2,
+            0xf2f2f2f2f2f2f2f2,
+        ]);
+
+        let mut lhs_host = HostMemory::<Fq>::new(1)?;
+        let mut rhs_host = HostMemory::<Fq>::new(1)?;
+        let mut out_host = HostMemory::<Fq>::new(1)?;
+
+        let lhs = DeviceMemory::<Fq>::new(&ctx, 1)?;
+        let rhs = DeviceMemory::<Fq>::new(&ctx, 1)?;
+        let out = DeviceMemory::<Fq>::new(&ctx, 1)?;
+
+        lhs_host[0] = lhs_value;
+        rhs_host[0] = rhs_value;
+        lhs.read_from(&lhs_host, 1)?;
+        rhs.read_from(&rhs_host, 1)?;
+
         let module = CudaModule::new("ff.ptx")?;
-        let f = module.get_func("ff_cpy")?;
+        let f = module.get_func("ff_add")?;
 
         let stream = CudaStream::new_with_context(&ctx)?;
-        let params = make_params!(src.get_inner(), dst.get_inner(), 10 as u32);
+        let params = make_params!(lhs.get_inner(), rhs.get_inner(), out.get_inner());
         let kernel = create_kernel_with_params!(f, <<<1, 1, 0>>>(params));
 
         stream.launch(&kernel)?;
         stream.sync()?;
 
-        dst.write_to(&mut dst_host, 10)?;
-        dbg!(src_host);
-        dbg!(dst_host.as_slice());
+        out.write_to(&mut out_host, 1)?;
+        assert_eq!(out_host[0], lhs_value.add(&rhs_value));
+        Ok(())
+    }
+
+    #[test]
+    fn test_ff_sub() -> CudaResult<()> {
+        cuda_init()?;
+        let dev = CudaDevice::new(0)?;
+        let ctx = CudaContext::new(dev)?;
+
+        let lhs_value = Fq::from_raw([
+            0x1212121212121212,
+            0x1212121212121212,
+            0x1212121212121212,
+            0x1212121212121212,
+        ]);
+
+        let rhs_value = Fq::from_raw([
+            0xf2f2f2f2f2f2f2f2,
+            0xf2f2f2f2f2f2f2f2,
+            0xf2f2f2f2f2f2f2f2,
+            0xf2f2f2f2f2f2f2f2,
+        ]);
+
+        let mut lhs_host = HostMemory::<Fq>::new(1)?;
+        let mut rhs_host = HostMemory::<Fq>::new(1)?;
+        let mut out_host = HostMemory::<Fq>::new(1)?;
+
+        let lhs = DeviceMemory::<Fq>::new(&ctx, 1)?;
+        let rhs = DeviceMemory::<Fq>::new(&ctx, 1)?;
+        let out = DeviceMemory::<Fq>::new(&ctx, 1)?;
+
+        lhs_host[0] = lhs_value;
+        rhs_host[0] = rhs_value;
+        lhs.read_from(&lhs_host, 1)?;
+        rhs.read_from(&rhs_host, 1)?;
+
+        let module = CudaModule::new("ff.ptx")?;
+        let f = module.get_func("ff_sub")?;
+
+        let stream = CudaStream::new_with_context(&ctx)?;
+        let params = make_params!(lhs.get_inner(), rhs.get_inner(), out.get_inner());
+        let kernel = create_kernel_with_params!(f, <<<1, 1, 0>>>(params));
+
+        stream.launch(&kernel)?;
+        stream.sync()?;
+
+        out.write_to(&mut out_host, 1)?;
+        assert_eq!(out_host[0], lhs_value.sub(&rhs_value));
         Ok(())
     }
 
