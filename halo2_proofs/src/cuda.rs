@@ -5,10 +5,39 @@ mod tests {
         make_params, CudaContext, CudaDevice, CudaModule, CudaResult, CudaStream, DeviceMemory,
         HostMemory,
     };
+    use halo2curves::bn256::{Fq, G1Affine};
     use std::path::PathBuf;
 
     const BUF_LEN: usize = 1 << 10;
     const BUCKET_LEN: usize = 1 << 8;
+
+    #[test]
+    fn test_ff() -> CudaResult<()> {
+        cuda_init()?;
+        let dev = CudaDevice::new(0)?;
+        let ctx = CudaContext::new(dev)?;
+
+        let src_host = (0..10).map(|_| G1Affine::generator()).collect::<Vec<_>>();
+        let mut dst_host = HostMemory::<G1Affine>::new(10)?;
+        let src = DeviceMemory::<G1Affine>::new(&ctx, 10)?;
+        let dst = DeviceMemory::<G1Affine>::new(&ctx, 10)?;
+
+        src.read_from(&src_host, src_host.len())?;
+        let module = CudaModule::new("ff.ptx")?;
+        let f = module.get_func("ff_cpy")?;
+
+        let stream = CudaStream::new_with_context(&ctx)?;
+        let params = make_params!(src.get_inner(), dst.get_inner(), 10 as u32);
+        let kernel = create_kernel_with_params!(f, <<<1, 1, 0>>>(params));
+
+        stream.launch(&kernel)?;
+        stream.sync()?;
+
+        dst.write_to(&mut dst_host, 10)?;
+        dbg!(src_host);
+        dbg!(dst_host.as_slice());
+        Ok(())
+    }
 
     #[test]
     fn test_kernel() -> CudaResult<()> {
