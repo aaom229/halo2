@@ -41,6 +41,23 @@ mod tests {
     }
 
     #[test]
+    fn test_g1_add() -> CudaResult<()> {
+        launch!("ff.ptx", "g1_add",
+            a: [G1; 1] => [
+                G1::random(OsRng)
+            ],
+            b: [G1; 1] => [
+                G1::random(OsRng)
+            ],
+            out: [G1; 1] => [
+                G1::identity()
+            ],
+        );
+        assert_eq!(out.1[0], a.1[0] + b.1[0]);
+        Ok(())
+    }
+
+    #[test]
     fn test_g1_dbl() -> CudaResult<()> {
         launch!("ff.ptx", "g1_dbl",
             a: [G1; 1] => [

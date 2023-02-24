@@ -227,6 +227,15 @@ void __device__ __forceinline__ montgomery_reduce(uint64_t *r, FF *ret) {
                   &(ret->bytes[3]), &carry0);
 }
 
+bool __device__ __forceinline__ eq(const FF& lhs, const FF& rhs) {
+  return (
+      (lhs.bytes[0] ^ rhs.bytes[0]) |  
+      (lhs.bytes[1] ^ rhs.bytes[1]) |  
+      (lhs.bytes[2] ^ rhs.bytes[2]) |  
+      (lhs.bytes[3] ^ rhs.bytes[3])
+  ) == 0;   
+}
+
 } // namespace ff
 
 
@@ -257,16 +266,6 @@ bool __device__ __forceinline__ is_identity(const G1 &v) {
   return ff::is_zero(v.z);
 };
 
-void __device__ add(const G1 &lhs, const G1 &rhs, G1* out) {
-  ff::FF z1z1, z2z2, u1, u2, s1, s2;
-  ff::square(lhs.z, &z1z1);
-  ff::square(rhs.z, &z1z1);
-  ff::mul(lhs.x, z2z2, &u1);
-  ff::mul(rhs.x, z1z1, &u2);
-  ff::mul(lhs.y, z2z2, &s1); ff::mul(s1, rhs.z, &s1);
-  ff::mul(rhs.y, z1z1, &s2); ff::mul(s2, lhs.z, &s2);
-}
-
 void __device__ dbl(const G1 &v, G1 *out) {
   if(is_identity(v)) {
     return to_identity(out);
@@ -292,6 +291,50 @@ void __device__ dbl(const G1 &v, G1 *out) {
   out->y = y3;
   out->z = z3;
 };
+
+void __device__ add(const G1 &lhs, const G1 &rhs, G1* out) {
+  if(is_identity(lhs)) {
+    *out = rhs;
+    return;
+  }
+
+  if(is_identity(rhs)) {
+    *out = lhs;
+    return;
+  }
+
+  ff::FF z1z1, z2z2, u1, u2, s1, s2, h, i, j, r, v, x3, y3, z3;
+  ff::square(lhs.z, &z1z1);
+  ff::square(rhs.z, &z2z2);
+  ff::mul(lhs.x, z2z2, &u1);
+  ff::mul(rhs.x, z1z1, &u2);
+  ff::mul(lhs.y, z2z2, &s1); ff::mul(s1, rhs.z, &s1);
+  ff::mul(rhs.y, z1z1, &s2); ff::mul(s2, lhs.z, &s2);
+  if(ff::eq(u1, u2)) {
+    if(ff::eq(s1, s2)) {
+      dbl(lhs, out);
+      return;
+    } else {
+      to_identity(out);
+      return;
+    }
+  }
+  ff::sub(u2, u1, &h);
+  ff::dbl(h, &i); ff::square(i, &i);
+  ff::mul(h, i, &j);
+  ff::sub(s2, s1, &r);
+  ff::dbl(r, &r);
+  ff::mul(u1, i, &v);
+  ff::square(r, &x3); ff::sub(x3, j, &x3); ff::sub(x3, v, &x3); ff::sub(x3, v, &x3);
+  ff::mul(s1, j, &s1);
+  ff::dbl(s1, &s1);
+  ff::sub(v, x3, &y3); ff::mul(r, y3, &y3); ff::sub(y3, s1, &y3); 
+  ff::add(lhs.z, rhs.z, &z3); ff::square(z3, &z3); ff::sub(z3, z1z1, &z3); ff::sub(z3, z2z2, &z3);
+  ff::mul(z3, h, &z3);
+  out->x = x3;
+  out->y = y3;
+  out->z = z3;
+}
 
 } // namespace g1
 } // namespace bn256
