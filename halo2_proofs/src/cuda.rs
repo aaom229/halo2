@@ -5,7 +5,10 @@ mod tests {
         make_params, CudaContext, CudaDevice, CudaModule, CudaResult, CudaStream, DeviceMemory,
         HostMemory,
     };
-    use halo2curves::bn256::{Bn256, Fq};
+    use ff::Field;
+    use group::Group;
+    use halo2curves::bn256::{Bn256, Fq, G1};
+    use rand_core::{OsRng, impls::next_u64_via_fill};
     use std::path::PathBuf;
 
     macro_rules! launch {
@@ -38,15 +41,39 @@ mod tests {
     }
 
     #[test]
+    fn test_g1_dbl() -> CudaResult<()> {
+        launch!("ff.ptx", "g1_dbl",
+            a: [G1; 1] => [
+                G1::random(OsRng)
+            ],
+            out: [G1; 1] => [
+                G1::identity()
+            ],
+        );
+        assert_eq!(out.1[0], a.1[0].double());
+        Ok(())
+    }
+
+    #[test]
+    fn test_ff_mul() -> CudaResult<()> {
+        launch!("ff.ptx", "ff_mul", 
+            a: [Fq;1] => [
+                Fq::random(OsRng)
+            ],
+            b: [Fq;1] => [
+                Fq::random(OsRng)
+            ],
+            out: [Fq;1] => [Fq::zero()],
+        );
+        assert_eq!(out.1[0], a.1[0].mul(&b.1[0]));
+        Ok(())
+    }
+
+    #[test]
     fn test_ff_square() -> CudaResult<()> {
         launch!("ff.ptx", "ff_square",
             a: [Fq;1] => [
-                Fq::from_raw([
-                    0x1212121212121212,
-                    0x1212121212121212,
-                    0x1212121212121212,
-                    0x1212121212121212,
-                ])
+                Fq::random(OsRng)
             ],
             out: [Fq;1] => [Fq::zero()],
         );
@@ -58,14 +85,14 @@ mod tests {
     fn test_ff_montgomery_reduce() -> CudaResult<()> {
         launch!("ff.ptx", "ff_montgomery_reduce", 
             a: [u64; 8] => [
-                0x1212121212121212,
-                0x1212121212121212,
-                0x1212121212121212,
-                0x1212121212121212,
-                0x1212121212121212,
-                0x1212121212121212,
-                0x1212121212121212,
-                0x1212121212121212,
+                next_u64_via_fill(&mut OsRng),
+                next_u64_via_fill(&mut OsRng),
+                next_u64_via_fill(&mut OsRng),
+                next_u64_via_fill(&mut OsRng),
+                next_u64_via_fill(&mut OsRng),
+                next_u64_via_fill(&mut OsRng),
+                next_u64_via_fill(&mut OsRng),
+                next_u64_via_fill(&mut OsRng),
             ], 
             out: [Fq; 1] => [Fq::zero()],
         );
@@ -86,20 +113,10 @@ mod tests {
     fn test_ff_add() -> CudaResult<()> {
         launch!("ff.ptx", "ff_add", 
             a: [Fq;1] => [
-                Fq::from_raw([
-                    0x1212121212121212,
-                    0x1212121212121212,
-                    0x1212121212121212,
-                    0x1212121212121212,
-                ])
+                Fq::random(OsRng)
             ],
             b: [Fq;1] => [
-                Fq::from_raw([
-                    0xf2f2f2f2f2f2f2f2,
-                    0xf2f2f2f2f2f2f2f2,
-                    0xf2f2f2f2f2f2f2f2,
-                    0xf2f2f2f2f2f2f2f2,
-                ])
+                Fq::random(OsRng)
             ],
             out: [Fq;1] => [Fq::zero()],
         );
@@ -111,20 +128,10 @@ mod tests {
     fn test_ff_sub() -> CudaResult<()> {
         launch!("ff.ptx", "ff_sub", 
             a: [Fq;1] => [
-                Fq::from_raw([
-                    0x1212121212121212,
-                    0x1212121212121212,
-                    0x1212121212121212,
-                    0x1212121212121212,
-                ])
+                Fq::random(OsRng)
             ],
             b: [Fq;1] => [
-                Fq::from_raw([
-                    0xf2f2f2f2f2f2f2f2,
-                    0xf2f2f2f2f2f2f2f2,
-                    0xf2f2f2f2f2f2f2f2,
-                    0xf2f2f2f2f2f2f2f2,
-                ])
+                Fq::random(OsRng)
             ],
             out: [Fq;1] => [Fq::zero()],
         );
