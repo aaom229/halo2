@@ -10,7 +10,7 @@ void __device__ __forceinline__ montgomery_reduce(uint64_t *, FF *);
 } // namespace ff
 
 namespace arithmetic {
-// TODO(Alan WANG): UT needed.
+#if __CUDACC_VER_MAJOR__ >= 11 && __CUDACC_VER_MINOR__ >= 6
 void __device__ __forceinline__ mac(uint64_t a, uint64_t b, uint64_t c,
                                     uint64_t carry, uint64_t *lo,
                                     uint64_t *ho) {
@@ -20,7 +20,6 @@ void __device__ __forceinline__ mac(uint64_t a, uint64_t b, uint64_t c,
   *ho = ret >> 64;
 }
 
-// TODO(Alan WANG): UT needed.
 void __device__ __forceinline__ adc(uint64_t a, uint64_t b, uint64_t carry,
                                     uint64_t *lo, uint64_t *ho) {
   __uint128_t ret = (__uint128_t)a + (__uint128_t)b + (__uint128_t)carry;
@@ -28,7 +27,6 @@ void __device__ __forceinline__ adc(uint64_t a, uint64_t b, uint64_t carry,
   *ho = ret >> 64;
 }
 
-// TODO(Alan WANG): UT needed.
 void __device__ __forceinline__ sbb(uint64_t a, uint64_t b, uint64_t borrow,
                                     uint64_t *lo, uint64_t *ho) {
   __uint128_t ret =
@@ -36,6 +34,56 @@ void __device__ __forceinline__ sbb(uint64_t a, uint64_t b, uint64_t borrow,
   *lo = (uint64_t)ret;
   *ho = ret >> 64;
 }
+#else
+void __device__ __forceinline__ mac32(uint32_t a, uint32_t b, uint32_t c,
+                                      uint32_t carry, uint32_t *lo,
+                                      uint32_t *ho) {
+  uint64_t ret = (uint64_t)a + ((uint64_t)b * (uint64_t)c) + (uint64_t)carry;
+  *lo = (uint32_t)ret;
+  *ho = ret >> 32;
+}
+
+void __device__ __forceinline__ adc(uint64_t a, uint64_t b, uint64_t carry,
+                                    uint64_t *lo, uint64_t *ho) {
+  uint32_t r[3];
+  uint64_t ret = 0ull + (uint32_t)carry + (uint32_t)a + (uint32_t)b;
+  r[2] = ret >> 32;
+  r[0] = (uint32_t)ret;
+  ret = (a >> 32) + (b >> 32) + (carry >> 32) + r[2];
+  r[2] = ret >> 32;
+  r[1] = (uint32_t)ret;
+  *lo = r[0] | ((uint64_t)(r[1]) << 32);
+  *ho = r[2];
+}
+
+void __device__ __forceinline__ mac(uint64_t a, uint64_t b, uint64_t c,
+                                    uint64_t carry, uint64_t *lo,
+                                    uint64_t *ho) {
+  uint32_t r[4], t0;
+  mac32((uint32_t)a, (uint32_t)b, (uint32_t)c, (uint32_t)carry, &r[0], &t0);
+  a = (a >> 32) + (carry >> 32);
+  mac32((uint32_t)a, (uint32_t)b, (uint32_t)(c >> 32), t0, &r[1], &t0);
+  mac32(r[1], (uint32_t)(b >> 32), (uint32_t)c, 0, &r[1], &r[2]);
+  a = (uint64_t)t0 + (a >> 32);
+  mac32(r[2], (uint32_t)(b >> 32), (uint32_t)(c >> 32), (uint32_t)a, &r[2],
+        &r[3]);
+  *lo = r[0] | ((uint64_t)(r[1]) << 32);
+  *ho = r[2] | ((uint64_t)(r[3]) << 32);
+}
+
+void __device__ __forceinline__ sbb(uint64_t a, uint64_t b, uint64_t borrow,
+                                    uint64_t *lo, uint64_t *ho) {
+  uint32_t r[4];
+  uint64_t ret = (uint32_t)a - ((uint32_t)b + (borrow >> 63));
+  r[0] = (uint32_t)ret;
+  r[2] = ret >> 32;
+  ret = (a >> 32) - ((b >> 32) + (r[2] >> 31));
+  r[1] = (uint32_t)ret;
+  r[3] = ret >> 32;
+  *lo = r[0] | ((uint64_t)(r[1]) << 32);
+  *ho = r[3] | ((uint64_t)(r[3]) << 32); // It's right!
+}
+#endif
 }; // namespace arithmetic
 
 namespace ff {
@@ -121,9 +169,9 @@ void __device__ __forceinline__ add(const FF &lhs, const FF &rhs, FF *out) {
   sub(*out, MODULUS, out);
 }
 
-void __device__ __forceinline__ dbl(const FF &self, FF* out) {
+void __device__ __forceinline__ dbl(const FF &self, FF *out) {
   return add(self, self, out);
-} 
+}
 
 void __device__ __forceinline__ square(const FF &self, FF *out) {
   uint64_t r[8], carry = 0;
@@ -227,17 +275,12 @@ void __device__ __forceinline__ montgomery_reduce(uint64_t *r, FF *ret) {
                   &(ret->bytes[3]), &carry0);
 }
 
-bool __device__ __forceinline__ eq(const FF& lhs, const FF& rhs) {
-  return (
-      (lhs.bytes[0] ^ rhs.bytes[0]) |  
-      (lhs.bytes[1] ^ rhs.bytes[1]) |  
-      (lhs.bytes[2] ^ rhs.bytes[2]) |  
-      (lhs.bytes[3] ^ rhs.bytes[3])
-  ) == 0;   
+bool __device__ __forceinline__ eq(const FF &lhs, const FF &rhs) {
+  return ((lhs.bytes[0] ^ rhs.bytes[0]) | (lhs.bytes[1] ^ rhs.bytes[1]) |
+          (lhs.bytes[2] ^ rhs.bytes[2]) | (lhs.bytes[3] ^ rhs.bytes[3])) == 0;
 }
 
 } // namespace ff
-
 
 namespace bn256 {
 
@@ -253,8 +296,8 @@ struct G1Affine {
 };
 namespace g1 {
 
-constexpr __device__ ff::FF G1_B = ff::FF({ 3, 0, 0, 0 });
-constexpr __device__ ff::FF G1_B_3 = ff::FF({ 9, 0, 0, 0 });
+constexpr __device__ ff::FF G1_B = ff::FF({3, 0, 0, 0});
+constexpr __device__ ff::FF G1_B_3 = ff::FF({9, 0, 0, 0});
 
 void __device__ __forceinline__ to_identity(G1 *v) {
   v->y = ff::R;
@@ -267,7 +310,7 @@ bool __device__ __forceinline__ is_identity(const G1 &v) {
 };
 
 void __device__ dbl(const G1 &v, G1 *out) {
-  if(is_identity(v)) {
+  if (is_identity(v)) {
     return to_identity(out);
   }
   ff::FF a, b, c, d, e, f, x3, y3, z3;
@@ -276,29 +319,34 @@ void __device__ dbl(const G1 &v, G1 *out) {
   ff::square(b, &c);
   ff::add(v.x, b, &d);
   ff::square(d, &d);
-  ff::sub(d, a, &d); ff::sub(d, c, &d);
+  ff::sub(d, a, &d);
+  ff::sub(d, c, &d);
   ff::dbl(d, &d);
-  ff::add(a, a, &e); ff::add(e, a, &e);
+  ff::add(a, a, &e);
+  ff::add(e, a, &e);
   ff::square(e, &f);
   ff::mul(v.z, v.y, &z3);
   ff::dbl(z3, &z3);
-  ff::sub(f, d, &x3); ff::sub(x3, d, &x3);
+  ff::sub(f, d, &x3);
+  ff::sub(x3, d, &x3);
   ff::dbl(c, &c);
   ff::dbl(c, &c);
   ff::dbl(c, &c);
-  ff::sub(d, x3, &d); ff::mul(e, d, &y3); ff::sub(y3, c, &y3);
+  ff::sub(d, x3, &d);
+  ff::mul(e, d, &y3);
+  ff::sub(y3, c, &y3);
   out->x = x3;
   out->y = y3;
   out->z = z3;
 };
 
-void __device__ add(const G1 &lhs, const G1 &rhs, G1* out) {
-  if(is_identity(lhs)) {
+void __device__ add(const G1 &lhs, const G1 &rhs, G1 *out) {
+  if (is_identity(lhs)) {
     *out = rhs;
     return;
   }
 
-  if(is_identity(rhs)) {
+  if (is_identity(rhs)) {
     *out = lhs;
     return;
   }
@@ -308,10 +356,12 @@ void __device__ add(const G1 &lhs, const G1 &rhs, G1* out) {
   ff::square(rhs.z, &z2z2);
   ff::mul(lhs.x, z2z2, &u1);
   ff::mul(rhs.x, z1z1, &u2);
-  ff::mul(lhs.y, z2z2, &s1); ff::mul(s1, rhs.z, &s1);
-  ff::mul(rhs.y, z1z1, &s2); ff::mul(s2, lhs.z, &s2);
-  if(ff::eq(u1, u2)) {
-    if(ff::eq(s1, s2)) {
+  ff::mul(lhs.y, z2z2, &s1);
+  ff::mul(s1, rhs.z, &s1);
+  ff::mul(rhs.y, z1z1, &s2);
+  ff::mul(s2, lhs.z, &s2);
+  if (ff::eq(u1, u2)) {
+    if (ff::eq(s1, s2)) {
       dbl(lhs, out);
       return;
     } else {
@@ -320,16 +370,25 @@ void __device__ add(const G1 &lhs, const G1 &rhs, G1* out) {
     }
   }
   ff::sub(u2, u1, &h);
-  ff::dbl(h, &i); ff::square(i, &i);
+  ff::dbl(h, &i);
+  ff::square(i, &i);
   ff::mul(h, i, &j);
   ff::sub(s2, s1, &r);
   ff::dbl(r, &r);
   ff::mul(u1, i, &v);
-  ff::square(r, &x3); ff::sub(x3, j, &x3); ff::sub(x3, v, &x3); ff::sub(x3, v, &x3);
+  ff::square(r, &x3);
+  ff::sub(x3, j, &x3);
+  ff::sub(x3, v, &x3);
+  ff::sub(x3, v, &x3);
   ff::mul(s1, j, &s1);
   ff::dbl(s1, &s1);
-  ff::sub(v, x3, &y3); ff::mul(r, y3, &y3); ff::sub(y3, s1, &y3); 
-  ff::add(lhs.z, rhs.z, &z3); ff::square(z3, &z3); ff::sub(z3, z1z1, &z3); ff::sub(z3, z2z2, &z3);
+  ff::sub(v, x3, &y3);
+  ff::mul(r, y3, &y3);
+  ff::sub(y3, s1, &y3);
+  ff::add(lhs.z, rhs.z, &z3);
+  ff::square(z3, &z3);
+  ff::sub(z3, z1z1, &z3);
+  ff::sub(z3, z2z2, &z3);
   ff::mul(z3, h, &z3);
   out->x = x3;
   out->y = y3;
@@ -351,7 +410,7 @@ extern "C" void __global__ ff_square(ff::FF *lhs, ff::FF *out) {
   ff::square(*lhs, out);
 }
 
-extern "C" void __global__ ff_mul(ff::FF *lhs, ff::FF* rhs, ff::FF* out) {
+extern "C" void __global__ ff_mul(ff::FF *lhs, ff::FF *rhs, ff::FF *out) {
   ff::mul(*lhs, *rhs, out);
 }
 
@@ -359,10 +418,10 @@ extern "C" void __global__ ff_montgomery_reduce(uint64_t *r, ff::FF *out) {
   ff::montgomery_reduce(r, out);
 }
 
-extern "C" void __global__ g1_dbl(bn256::G1* v, bn256::G1* out) {
+extern "C" void __global__ g1_dbl(bn256::G1 *v, bn256::G1 *out) {
   bn256::g1::dbl(*v, out);
 }
 
-extern "C" void __global__ g1_add(bn256::G1* a, bn256::G1* b, bn256::G1 *out) {
+extern "C" void __global__ g1_add(bn256::G1 *a, bn256::G1 *b, bn256::G1 *out) {
   bn256::g1::add(*a, *b, out);
 }
