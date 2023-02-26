@@ -13,81 +13,56 @@ void __device__ __forceinline__ montgomery_reduce(uint64_t *, FF *);
 } // namespace ff
 
 namespace arithmetic {
-#if __CUDACC_VER_MAJOR__ >= 11 && __CUDACC_VER_MINOR__ >= 6
-void __device__ __forceinline__ mac(uint64_t a, uint64_t b, uint64_t c,
-                                    uint64_t carry, uint64_t *lo,
-                                    uint64_t *ho) {
-  __uint128_t ret =
-      (__uint128_t)a + ((__uint128_t)b * (__uint128_t)c) + (__uint128_t)carry;
-  *lo = (uint64_t)ret;
-  *ho = ret >> 64;
+
+void __device__ __forceinline__ add2_uint64(uint64_t ah, uint64_t al,
+    uint64_t bh, uint64_t bl,
+    uint64_t* oh, uint64_t* ol) {
+    *ol = al + bl;
+    *oh = ah + bh + ((*ol) < al);
 }
 
-void __device__ __forceinline__ adc(uint64_t a, uint64_t b, uint64_t carry,
-                                    uint64_t *lo, uint64_t *ho) {
-  __uint128_t ret = (__uint128_t)a + (__uint128_t)b + (__uint128_t)carry;
-  *lo = (uint64_t)ret;
-  *ho = ret >> 64;
+void __device__ __forceinline__ add3_uint64(uint64_t a, uint64_t b, uint64_t c,
+    uint64_t* oh, uint64_t* ol) {
+    *ol = a + b;
+    *oh = ((*ol) < a);
+    *ol = *ol + c;
+    *oh = *oh + ((*ol) < c);
 }
 
-void __device__ __forceinline__ sbb(uint64_t a, uint64_t b, uint64_t borrow,
-                                    uint64_t *lo, uint64_t *ho) {
-  __uint128_t ret =
-      (__uint128_t)a - ((__uint128_t)b + (__uint128_t)(borrow >> 63));
-  *lo = (uint64_t)ret;
-  *ho = ret >> 64;
-}
-#else
-void __device__ __forceinline__ mac32(uint32_t a, uint32_t b, uint32_t c,
-                                      uint32_t carry, uint32_t *lo,
-                                      uint32_t *ho) {
-  uint64_t ret = (uint64_t)a + ((uint64_t)b * (uint64_t)c) + (uint64_t)carry;
-  *lo = (uint32_t)ret;
-  *ho = ret >> 32;
-  *ho = 0;
-}
-
-void __device__ __forceinline__ adc(uint64_t a, uint64_t b, uint64_t carry,
-                                    uint64_t *lo, uint64_t *ho) {
-  uint32_t r[3];
-  uint64_t ret = 0ull + (uint32_t)carry + (uint32_t)a + (uint32_t)b;
-  r[2] = ret >> 32;
-  r[0] = (uint32_t)ret;
-  ret = (a >> 32) + (b >> 32) + (carry >> 32) + r[2];
-  r[2] = ret >> 32;
-  r[1] = (uint32_t)ret;
-  *lo = r[0] | ((uint64_t)(r[1]) << 32);
-  *ho = r[2];
+void __device__ __forceinline__ mul2_uint64(uint64_t a, uint64_t b,
+    uint64_t* oh, uint64_t* ol) {
+    uint64_t ah = a >> 32;
+    uint64_t al = a & 0xffffffff;
+    uint64_t bh = b >> 32;
+    uint64_t bl = b & 0xffffffff;
+    uint64_t temp1 = al * bh;
+    uint64_t temp2 = ah * bl;
+    uint64_t temp3 = al * bl;
+    add3_uint64((temp1 & 0xffffffff) << 32, (temp2 & 0xffffffff) << 32, temp3, oh, ol);
+    *oh += ah * bh + (temp1 >> 32) + (temp2 >> 32);
 }
 
 void __device__ __forceinline__ mac(uint64_t a, uint64_t b, uint64_t c,
-                                    uint64_t carry, uint64_t *lo,
-                                    uint64_t *ho) {
-  uint32_t r[4], t0;
-  mac32((uint32_t)a, (uint32_t)b, (uint32_t)c, (uint32_t)carry, &r[0], &t0);
-  a = (a >> 32) + (carry >> 32);
-  mac32((uint32_t)a, (uint32_t)b, (uint32_t)(c >> 32), t0, &r[1], &t0);
-  mac32(r[1], (uint32_t)(b >> 32), (uint32_t)c, 0, &r[1], &r[2]);
-  a = (uint64_t)t0 + (a >> 32);
-  mac32(r[2], (uint32_t)(b >> 32), (uint32_t)(c >> 32), (uint32_t)a, &r[2],
-        &r[3]);
-  *lo = r[0] | ((uint64_t)(r[1]) << 32);
-  *ho = r[2] | ((uint64_t)(r[3]) << 32);
+                                    uint64_t carry, uint64_t* ol, uint64_t* oh) {
+  uint64_t temp1_hi = 0, temp1_lo = 0;
+  mul2_uint64(b, c, &temp1_hi, &temp1_lo);
+  add3_uint64(a, temp1_lo, carry, oh, ol);
+  *oh += temp1_hi;
+}
+
+void __device__ __forceinline__ adc(uint64_t a, uint64_t b, uint64_t carry,
+                                    uint64_t* ol, uint64_t* oh) {
+  add3_uint64(a, b, carry, oh, ol);
 }
 
 void __device__ __forceinline__ sbb(uint64_t a, uint64_t b, uint64_t borrow,
-                                    uint64_t *lo, uint64_t *ho) {
-  uint32_t r[4];
-  uint64_t ret = (uint32_t)a - ((uint32_t)b + (borrow >> 63));
-  r[0] = (uint32_t)ret;
-  r[2] = ret >> 32;
-  ret = (a >> 32) - ((b >> 32) + (r[2] >> 31));
-  r[1] = (uint32_t)ret;
-  r[3] = ret >> 32;
-  *lo = r[0] | ((uint64_t)(r[1]) << 32);
-  *ho = r[3] | ((uint64_t)(r[3]) << 32); // It's right!
+                                    uint64_t* ol, uint64_t* oh) {
+  uint64_t temp1 = a - b;
+  *oh = (temp1 > a);
+  *ol = temp1 - (borrow >> 63);
+  *oh += (*ol > temp1);
+  *oh *= 0xffffffffffffffff;
 }
-#endif
 }; // namespace arithmetic
 
 namespace ff {
