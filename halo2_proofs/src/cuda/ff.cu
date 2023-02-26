@@ -5,6 +5,9 @@ namespace ff {
 struct FF {
   uint64_t bytes[4];
 };
+struct FFRepr {
+  uint8_t bytes[32];
+};
 void __device__ __forceinline__ montgomery_reduce(uint64_t *, FF *);
 
 } // namespace ff
@@ -41,6 +44,7 @@ void __device__ __forceinline__ mac32(uint32_t a, uint32_t b, uint32_t c,
   uint64_t ret = (uint64_t)a + ((uint64_t)b * (uint64_t)c) + (uint64_t)carry;
   *lo = (uint32_t)ret;
   *ho = ret >> 32;
+  *ho = 0;
 }
 
 void __device__ __forceinline__ adc(uint64_t a, uint64_t b, uint64_t carry,
@@ -129,7 +133,11 @@ constexpr FF NEGATIVE_ONE = {{
 
 constexpr uint64_t INV = 0x87d20782e4866389;
 
-FF __device__ zero() { return FF({0, 0, 0, 0}); }
+FF __device__ __forceinline__ zero() { return FF({0, 0, 0, 0}); }
+
+uint8_t __device__ __forceinline__ get(const FF &v, uint32_t idx) {
+  return ((uint8_t *)((void *)&v))[idx];
+}
 
 bool __device__ __forceinline__ is_zero(const FF &v) {
   uint64_t res = 0xffffffffffffffff;
@@ -398,6 +406,30 @@ void __device__ add(const G1 &lhs, const G1 &rhs, G1 *out) {
 } // namespace g1
 } // namespace bn256
 
+namespace pippenger {
+void __device__ make_buckets(bn256::G1 *bases, ff::FFRepr *scalars,
+                             bn256::G1 *buckets, uint32_t buf_len,
+                             uint32_t dev_idx, uint32_t segments_per_dev,
+                             uint32_t blocks_per_segment) {
+  uint32_t thread_idx = threadIdx.x;
+  uint32_t blk_idx = blockIdx.x;
+  uint32_t segment_idx =
+      (dev_idx * segments_per_dev) + (blk_idx / blocks_per_segment);
+  uint32_t buf_len_per_blk = buf_len / blocks_per_segment;
+  uint32_t buf_offset = buf_len_per_blk * (blk_idx % blocks_per_segment);
+  uint32_t bucket_offset = blk_idx << 8;
+
+  for (uint32_t i = 0; i < buf_len_per_blk; i++) {
+    uint32_t idx = i + buf_offset;
+    uint8_t segment = scalars[idx].bytes[segment_idx];
+    if (segment == thread_idx) {
+      bn256::g1::add(buckets[bucket_offset + thread_idx], bases[idx],
+                     &buckets[bucket_offset + thread_idx]);
+    }
+  }
+}
+} // namespace pippenger
+
 extern "C" void __global__ ff_add(ff::FF *lhs, ff::FF *rhs, ff::FF *out) {
   ff::add(*lhs, *rhs, out);
 }
@@ -424,4 +456,11 @@ extern "C" void __global__ g1_dbl(bn256::G1 *v, bn256::G1 *out) {
 
 extern "C" void __global__ g1_add(bn256::G1 *a, bn256::G1 *b, bn256::G1 *out) {
   bn256::g1::add(*a, *b, out);
+}
+
+extern "C" void __global__ pippenger_make_buckets(
+    uint32_t *cfg, /*(buf_len, dev_idx, segments_per_dev, blocks_per_segment) */
+    bn256::G1 *bases, ff::FFRepr *scalars, bn256::G1 *buckets) {
+  pippenger::make_buckets(bases, scalars, buckets, cfg[0], cfg[1], cfg[2],
+                          cfg[3]);
 }
